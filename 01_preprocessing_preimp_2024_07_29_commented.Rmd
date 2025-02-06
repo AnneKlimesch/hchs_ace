@@ -1,0 +1,581 @@
+---
+title: "HCHS ACE Analysis"
+output: html_document
+date: "2023-03-10"
+author: "Anne Klimesch"
+note: |
+  This script combines the variables of interest of different data sets into one new dataset for analysis. The datasets that will be combined are: 
+  1. SES data and ACE data ("HCHS_Data_SPSS_labelled_sozio_HCHS_SES_Index_2023_03_09.sav"), 
+  2. structural subcortical MRI data ("aseg.sav"), and 
+  3. structural cortical MRI data ("aparc_rh_thickness_destrieux_stats.txt",  "aparc_rh_volume_destrieux_stats.txt"). 
+  
+  Data are then preprocessed and prepared for analysis. The output of this code will be three preprocessed datasets: 
+  1. "preimp_no_na.csv" which will be used for the main analyses, 
+  2. "preimp_no_na_excl_outlier.csv" which will be used for sensitivity analyses, and 
+  3. "preimp_prepped_for_imputation.csv" which will be used in the code "02_imputation.Rmd" to impute the missing data and perform further sensitivity analyses with the resulting dataset. 
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Load required packages
+```{r, include=FALSE}
+library(dplyr)
+library(stringr)  #extract parts of a variable for each case of this variable; organize columns when reading the mri txt files; to remove spaces from values
+library(haven)    #to import spss data files
+library(foreign)
+library(naniar)   #for missing variable analysis 
+library(nortest)  #for missing variable analysis 
+library(stats)    #for missing variable analysis 
+library(kableExtra)#for missing data analysis
+library(ggplot2)  #for histograms
+library(gridExtra)#for presentation of histograms 
+library(finalfit) #for visualization of missing data patterns 
+library(psych)    #for descriptives and intercorrelation matrix
+library(sjPlot)   #for plotting descriptives
+library(stargazer)#for plotting descriptives
+library(ggplot2)  #for plotting 
+library(gridExtra)#for plotting 
+library(corrplot)    #for intercorrelation matrix
+library(PerformanceAnalytics) #for heatmap
+library(corrplot) #for colored intercorrelation matrix
+library(knitr)    #for nice_table
+library(rempsyc)  #for nice_table
+#library(pcaMethods) # for misscompare
+library(visdat) #for visualization of missing data pattern for many variables at the same time
+library(apaTables)
+library("Hmisc")
+library(DescTools) #for kendall b correlation coefficient 
+```
+
+IMPORTING MRI AND SES/QUESTIONNAIRE DATA
+Import subcortical neuro data file, SES-data file (SES-Index output of HCHS SES study), and files with DLPFC neuro data 
+```{r}
+mri_data_subcort <- read_sav("C:your_path_to_data/aseg.sav")
+
+ses_data <- read.spss("C:your_path_to_data/HCHS_Data_SPSS_labelled_sozio_HCHS_SES_Index_2023_03_18.sav", use.value.label = FALSE, to.data.frame=TRUE)
+
+mri_data_cort_1 <- read.table("aparc_rh_thickness_destrieux_stats.txt", sep = "", check.names = TRUE, header = TRUE, dec = ".") 
+colnames(mri_data_cort_1)[1] <- "pseudonym" #rename the first column to pseudonym
+
+mri_data_cort_2 <- read.table("aparc_rh_volume_destrieux_stats.txt", sep = "", check.names = TRUE, header = TRUE, dec = ".") 
+colnames(mri_data_cort_2)[1] <- "pseudonym" #rename the first column to pseudonym
+```
+
+PREPARATION CORTICAL MRI DATA
+Choose subset with rDLPFC thickness data; based on Destrieux et al. (2010)
+middle frontal gyrus, F2 (rh_G_front_middle_thickness)
+superior frontal gyrus (rh_G_front_sup_thickness)
+```{r}
+mri_data_cort_complete <- merge(mri_data_cort_1, mri_data_cort_2, by = "pseudonym", all = TRUE) #merge the two files with cortical data 
+mri_dlpfc_subset <- mri_data_cort_complete[, c("pseudonym", #choose variables of interest for research question
+                                               "rh_G_front_middle_thickness",
+                                               "rh_G_front_sup_thickness",
+                                               "eTIV.x")]
+```
+
+PREPARATION OF SUBCORTICAL MRI DATA
+```{r}
+mri_subcort_subset <- mri_data_subcort[, c("Pseudonym_N_MRT", #choose variables of interest for research question
+                                           "RightHippocampus", 
+                                           "RightAmygdala", 
+                                           "LeftHippocampus", 
+                                           "LeftAmygdala", 
+                                           "bilatHippocampus", 
+                                           "bilatAmygdala",
+                                           "lhCortexVol",
+                                           "rhCortexVol",
+                                           "TotalGrayVol",
+                                           "EstimatedTotalIntraCranialVol")]
+
+colnames(mri_subcort_subset)[1] <- "pseudonym" #rename the first column to pseudonym
+mri_subcort_and_dlpfc <- merge(mri_subcort_subset, mri_dlpfc_subset, by = "pseudonym", all = TRUE) #merge df with subcortical and cortical data by pseudonym
+mri_data_complete <- mri_subcort_and_dlpfc 
+```
+n(mri_data_complete)=2525
+
+PREPARATION TIV VALUES
+Save the text file with the TIV values as a sav file.
+Rename variables 1 and 3. 
+```{r}
+#load dataset
+tiv_data <- read.delim("tiv.txt", header = TRUE, sep = " ", dec = ".") #import .txt file with tiv values
+names(tiv_data) <- c("v1", "v2", "cat12_tiv") #rename variables 
+
+#remove missing values 
+tiv_data[is.na(tiv_data$cat12_tiv), ] #check for missing tiv values 
+tiv_data_subset <- tiv_data[complete.cases(tiv_data$cat12_tiv),] #remove cases with missing tiv values 
+non_na_counts <- colSums(!is.na(tiv_data_subset)) #count the non missing values in each column 
+tiv_data_subset <- tiv_data_subset[, non_na_counts > 0] #keep the columns which contain values 
+
+#extract pseudonym from variable v1
+tiv_data_subset$pseudonym <- as.character(tiv_data_subset$v1) #based on v1 create new variable "pseudondym" as character object 
+tiv_data_subset$pseudonym <- gsub("^.{0,13}", "", tiv_data_subset$pseudonym) #remove charaters 0-13 
+tiv_data_subset$pseudonym = substr(tiv_data_subset$pseudonym,1,nchar(tiv_data_subset$pseudonym)-22) #remove 22 tail characters
+head(tiv_data_subset$pseudonym, 10) 
+tiv_data_subset <- tiv_data_subset[, -1] #remove the original variable containing the pseudonyms 
+```
+
+PREPARATION SES DATA
+```{r}
+ses_data_subset <- ses_data[, c("Pseudonym", #choose subset of variables
+                                "HCH_SVAGE0001", 
+                                "HCH_SVSEX0001", 
+                                "DEGS_HCHS_JOB_mean", 
+                                "DEGS_HCHS_INCOME_mean", 
+                                "DEGS_HCHS_EDU_mean",
+                                "am_schube_ausb_037_2_ordinal_mean",
+                                "HCHS_SES_Index_incl_imputed_data",
+                                "vf_ace_001",
+                                "vf_ace_002",
+                                "vf_ace_003",
+                                "vf_ace_004",
+                                "vf_ace_005",
+                                "vf_ace_006",
+                                "vf_ace_007",
+                                "vf_ace_008",
+                                "vf_ace_009",
+                                "vf_ace_010",
+                                "vf_gad7_001",
+                                "vf_gad7_002",
+                                "vf_gad7_003",
+                                "vf_gad7_004",
+                                "vf_gad7_005",
+                                "vf_gad7_006",
+                                "vf_gad7_007",
+                                "vf_phq9_001",
+                                "vf_phq9_002",
+                                "vf_phq9_003",
+                                "vf_phq9_004",
+                                "vf_phq9_005",
+                                "vf_phq9_006",
+                                "vf_phq9_007",
+                                "vf_phq9_008",
+                                "vf_phq9_009"
+                                )]
+
+colnames_ses_subset <- colnames(ses_data_subset) #save existing names to character vector
+ses_cols_to_replace <- c("Pseudonym", "HCH_SVAGE0001", "HCH_SVSEX0001", "DEGS_HCHS_JOB_mean", "DEGS_HCHS_INCOME_mean", "DEGS_HCHS_EDU_mean", "am_schube_ausb_037_2_ordinal_mean", "HCHS_SES_Index_incl_imputed_data")
+new_names <- c("pseudonym", "age", "sex", "job", "income", "education", "ind_income", "ses_index")
+replace_indices <- which(colnames_ses_subset %in% ses_cols_to_replace)
+colnames(ses_data_subset)[replace_indices] <- new_names
+print(colnames(ses_data_subset))
+```
+
+PREPARE ACE VARIABLES 
+```{r}
+column_ace <- which(colnames(ses_data_subset) == "vf_ace_001") #Identify column of ace variables
+
+for (i in column_ace:(column_ace + 9)) { # loop through columns containing ace variables
+  print(unique(ses_data_subset[, i])) # check what kind of values exist --> result: some of the values include spaces
+} 
+
+vars_to_recode <- c("vf_ace_001", "vf_ace_002", "vf_ace_003", "vf_ace_004", "vf_ace_005", "vf_ace_006", "vf_ace_007", "vf_ace_008", "vf_ace_009", "vf_ace_010") #create a vector of variable names to recode 
+
+for (i in 1:2) { # loop over selected variables and recode them (loop twice because otherwise there will be spaces left)
+  for (var in vars_to_recode) {
+    ses_data_subset[[var]] <- gsub("0 ", "0", ses_data_subset[[var]])
+    ses_data_subset[[var]] <- gsub("1 ", "1", ses_data_subset[[var]])
+    ses_data_subset[[var]] <- gsub("NA ", "NA", ses_data_subset[[var]])
+    ses_data_subset[[var]] <- gsub("-99", "NA", ses_data_subset[[var]])
+    ses_data_subset[[var]] <- gsub("NA$", "NA", ses_data_subset[[var]])  
+    ses_data_subset[[var]][ses_data_subset[[var]] == "NA"] <- NA
+  }
+}
+
+for (i in column_ace:(column_ace + 9)) { # loop through columns containing ace variables
+  print(unique(ses_data_subset[, i])) # check if for loop succeeded 
+} 
+```
+n(ses_data_subset)=10000 
+
+CHECK FOR OUTLIERTS
+```{r}
+summary(ses_data_subset)
+
+#create box plots for  selected variables
+ses_boxplot <- c("job", "income", "education")
+phq_boxplot <- c("vf_phq9_001", "vf_phq9_002", "vf_phq9_003", "vf_phq9_004", "vf_phq9_005", "vf_phq9_006", "vf_phq9_007","vf_phq9_008", "vf_phq9_009")
+gad_boxplot <- c("vf_gad7_001", "vf_gad7_002", "vf_gad7_003", "vf_gad7_004", "vf_gad7_005", "vf_gad7_006", "vf_gad7_007")
+boxplot(ses_data_subset[, ses_boxplot])
+boxplot(ses_data_subset[, phq_boxplot])
+boxplot(ses_data_subset[, gad_boxplot])
+```
+Based on the boxplots, decided not to exclude outliers at this stage. Basically every response "3" on the PHQ-9 would be an outlier but we are interested in exactly these responses. Therefore, check for outliers after determination of sum scores again. 
+
+IDENTIFY MISSING DATA (PATTERN)
+```{r}
+ses_missing_analysis <- ses_data_subset[, c("age", "sex", "job", "income", "education", "vf_ace_001", "vf_ace_002", "vf_ace_003", "vf_ace_004", "vf_ace_005", "vf_ace_006", "vf_ace_007", "vf_ace_008", "vf_ace_009", "vf_ace_010", "vf_gad7_001", "vf_gad7_002", "vf_gad7_003", "vf_gad7_004", "vf_gad7_005", "vf_gad7_006", "vf_gad7_007", "vf_phq9_001", "vf_phq9_002", "vf_phq9_003", "vf_phq9_004", "vf_phq9_005", "vf_phq9_006", "vf_phq9_007","vf_phq9_008", "vf_phq9_009")]
+ses_missing_analysis %>% #save variables of interest as new data frame and create a missing plot with them
+  missing_plot(title = "Missing values plot of initial SES and questionnaire data (n = 10.000)")
+
+explanatory = c("job", "income", "education", "vf_ace_001", "vf_gad7_001")
+dependent = "vf_phq9_001"
+ses_data_subset %>% # choose subset of variables and look at their missing data pattern
+  missing_pattern(dependent, explanatory)
+
+table_output <- miss_var_summary(ses_missing_analysis) # check for % of missing values per variable
+table_html <- kable(table_output, format = "html") %>% # convert the table to a html table
+  kable_styling()
+writeLines(table_html, "missing_summary.html") #save html
+```
+
+MERGE MRI DATA SET + SES DATA SET + CAT12 TIV BY PSEUDONYM and CLEAN VARIABLE NAMES
+```{r}
+ses_data_subset$pseudonym <- trimws(ses_data_subset$pseudonym) # remove the spaces from the end of the pseudonym values
+ace_mri_data <- merge(ses_data_subset, mri_data_complete, by = "pseudonym", all = TRUE) # merge data sets 
+ace_mri_data <- merge(ace_mri_data, tiv_data_subset, by = "pseudonym", all = TRUE)
+
+existing_names_preimp <- colnames(ace_mri_data) # check for present column names
+columns_to_replace <- c("RightHippocampus", "RightAmygdala", "LeftHippocampus", "LeftAmygdala", "bilatHippocampus", "bilatAmygdala", "EstimatedTotalIntraCranialVol") 
+new_names <- c("r_hippo", "r_amy", "l_hippo", "l_amy", "bilat_hippo", "bilat_amy", "tiv") # shorten long column names 
+replace_indices <- which(existing_names_preimp %in% columns_to_replace)
+colnames(ace_mri_data)[replace_indices] <- new_names
+print(colnames(ace_mri_data)) # print to check out new column names
+```
+n=10004
+
+REMOVE CASES THAT HAVE ONLY NAs ON MRI VARIABLES
+```{r}
+vars_mri <- c("r_hippo", "r_amy", "l_hippo", "l_amy", "bilat_hippo", "bilat_amy", "lhCortexVol", "rhCortexVol", "TotalGrayVol", "rh_G_front_middle_thickness", "rh_G_front_sup_thickness", "tiv")
+vars_mri_na_only <- rowSums(is.na(ace_mri_data[, vars_mri])) == length(vars_mri) #identify cases that contain only NAs for vars_mri
+ace_mri_data <- ace_mri_data %>%
+  mutate(vars_mri_na_only = if_else(rowSums(is.na(select(., vars_mri))) == length(vars_mri), 1, 0)) %>%
+  filter(vars_mri_na_only == 0) %>%
+  select(-vars_mri_na_only)
+```
+n=2525
+
+REMOVE CASES WITH ANOMALIES IN THE MRI AND MRI OUTLIERS 
+```{r}
+mri_clean <- readLines("mri_clean.txt") # load txt file with IDs of all cases that did not have any anomalies in the MRI, neither were they outlier
+column_names <- c("pseudonym", "mri_clean")
+mri_clean <- data.frame(pseudonym = mri_clean, mri_clean = 1) # create df with variable indicating that these mris are clean ("1"); these are n=2297
+sum(is.na(ace_mri_data$pseudonym)) #check if there are NAs 
+ace_mri_data <- merge(ace_mri_data, mri_clean, by = "pseudonym", all = TRUE) # merge dfs and keep all cases of both files
+ace_mri_data$mri_clean[is.na(ace_mri_data$mri_clean)] <- 0
+table(ace_mri_data$mri_clean) # n=327 cases have NAs and will therefore be excluded
+ace_mri_data <- filter(ace_mri_data, mri_clean == 1) # keep all variables with mri_clean = 1, because these are the ones without amenities on mri --> n=2297
+```
+I have removed n=327 cases, because the MRIs did not pass the quality checks or because the IDs did match between the MRI file and the behavioral data file. --> n=2297
+
+Create variables which indicate missing values for each case in each ses variable. The variables will be used in multiple imputation, however, these variables have been imputed in another study so we do not want to impute the missing values again but keep the NAs. Therefore, I save these NAs now, to later recreate them.
+```{r}
+check_na <- c("job", "education", "ind_income", "income") # Define the variables to check for NA values
+for (variable in check_na) { # iterate over the variables 
+  na_variable <- paste0(variable, "_na") # create a new variable with _na suffix for each variable
+  ace_mri_data[[na_variable]] <- ifelse(is.na(ace_mri_data[[variable]]), 0, 1) # check for NAs in the variables and assign 0/1 accordingly
+}
+table(ace_mri_data$ind_income_na) # NAs n=102 
+table(ace_mri_data$education_na) # NAs n=218 (same as income and job)
+```
+
+INSPECT MISSING DATA PATTERN IN QUESTIONNAIRE DATA  
+To do so, remove those cases with NAs on the SES-Index from the data set because they won't be part of any analysis later.
+```{r}
+preimp_na_analysis <- ace_mri_data
+preimp_na_analysis <- preimp_na_analysis[!is.na(preimp_na_analysis$ses_index), ] # select those cases that do not have an NA on SES-Index n=102
+sum(is.na(preimp_na_analysis$ind_income))
+sum(is.na(preimp_na_analysis$ses_index))
+sum(is.na(ace_mri_data$ses_index))
+```
+dataset preimp_na_analysis (n=2195) is used to analyse missing data pattern in questionnaire data 
+
+Create lists of variables belonging to each questionnaire to do separate NA analyses. 
+```{r}
+vars_ace <- c("vf_ace_001", "vf_ace_002", "vf_ace_003", "vf_ace_004", "vf_ace_005", "vf_ace_006", "vf_ace_007", "vf_ace_008", "vf_ace_009", "vf_ace_010") # save questionnaire items as list
+vars_gad7 <- c("vf_gad7_001", "vf_gad7_002", "vf_gad7_003", "vf_gad7_004", "vf_gad7_005", "vf_gad7_006", "vf_gad7_007") # save the relevant questionnaire items as list
+vars_phq9 <- c("vf_phq9_001", "vf_phq9_002", "vf_phq9_003", "vf_phq9_004", "vf_phq9_005", "vf_phq9_006", "vf_phq9_007","vf_phq9_008", "vf_phq9_009") # save questionnaire items as list
+vars_quest <- c("vf_ace_001", "vf_ace_002", "vf_ace_003", "vf_ace_004", "vf_ace_005", "vf_ace_006", "vf_ace_007", "vf_ace_008", "vf_ace_009", "vf_ace_010", "vf_gad7_001", "vf_gad7_002", "vf_gad7_003", "vf_gad7_004", "vf_gad7_005", "vf_gad7_006", "vf_gad7_007", "vf_phq9_001", "vf_phq9_002", "vf_phq9_003", "vf_phq9_004", "vf_phq9_005", "vf_phq9_006", "vf_phq9_007","vf_phq9_008", "vf_phq9_009") # save all relevant questionnaire items as list
+
+vis_miss(preimp_na_analysis[, vars_quest]) # visualize missing data pattern 
+
+# For overview, create new variables for each questionnaire, indicating number of NAs per questionnaire item
+preimp_na_analysis$ace_na_sum <- rowSums(is.na(preimp_na_analysis[, vars_ace])) # create new variable to store sum of ACE NAs
+table(preimp_na_analysis$ace_na_sum) # check distribution of NAs
+preimp_na_analysis$gad7_na_sum <- rowSums(is.na(preimp_na_analysis[, vars_gad7])) # create new variable to store sum GAD7 NAs
+table(preimp_na_analysis$gad7_na_sum)
+preimp_na_analysis$phq9_na_sum <- rowSums(is.na(preimp_na_analysis[, vars_phq9])) # create new variable to store sum of PHQ9 NAs
+table(preimp_na_analysis$phq9_na_sum)
+preimp_na_analysis$quest_na_sum <- rowSums(is.na(preimp_na_analysis[, vars_quest])) # create new variable to store sum of all questionnaire variables' NAs
+print("quest_na_sum")
+table(preimp_na_analysis$quest_na_sum)
+
+#Remove those cases that have only NAs on either of the 3 questionnaires
+vars_quest_na_only <- rowSums(is.na(preimp_na_analysis[, vars_quest])) == length(vars_quest) #identify cases that contain only NAs for vars_quest
+preimp_na_analysis <- preimp_na_analysis %>%
+  mutate(vars_quest_na_only = if_else(rowSums(is.na(select(., vars_quest))) == length(vars_quest), 1, 0))
+table(preimp_na_analysis$vars_quest_na_only) # n=119
+
+preimp_na_analysis <- preimp_na_analysis %>% 
+  filter(vars_quest_na_only != 1) %>%
+  select(-vars_quest_na_only) 
+
+vars_phq9_na_only <- rowSums(is.na(preimp_na_analysis[, vars_phq9])) == length(vars_phq9) # identify cases that contain only NAs for vars_phq9
+preimp_na_analysis <- preimp_na_analysis %>% #determine how many cases have NAs on all items of PHQ-9
+  mutate(vars_phq9_na_only = if_else(rowSums(is.na(select(., vars_phq9))) == length(vars_phq9), 1, 0))
+table(preimp_na_analysis$vars_phq9_na_only) # n=129 (n=10 after removal of those with only NAs on quest.)
+
+preimp_na_analysis <- preimp_na_analysis %>%   
+  filter(vars_phq9_na_only != 1) %>%
+  select(-vars_phq9_na_only)
+
+vars_gad7_na_only <- rowSums(is.na(preimp_na_analysis[, vars_gad7])) == length(vars_gad7) #identify cases that contain only NAs for vars_gad7
+preimp_na_analysis <- preimp_na_analysis %>% #determine how many cases have NAs on all items of GAD-7
+  mutate(vars_gad7_na_only = if_else(rowSums(is.na(select(., vars_gad7))) == length(vars_gad7), 1, 0))
+table(preimp_na_analysis$vars_gad7_na_only) # n=131  (n=10 after removal of those with only NAs on quest.)
+
+preimp_na_analysis <- preimp_na_analysis %>% 
+  filter(vars_gad7_na_only != 1) %>%
+  select(-vars_gad7_na_only)
+
+vars_ace_na_only <- rowSums(is.na(preimp_na_analysis[, vars_ace])) == length(vars_ace) #identify cases that contain only NAs for vars_ace
+preimp_na_analysis <- preimp_na_analysis %>%
+  mutate(vars_ace_na_only = if_else(rowSums(is.na(select(., vars_ace))) == length(vars_ace), 1, 0))
+table(preimp_na_analysis$vars_ace_na_only) # n=134  (n=14 after removal of those with only NAs on quest.)
+
+preimp_na_analysis <- preimp_na_analysis %>% 
+  filter(vars_ace_na_only != 1) %>%
+  select(-vars_ace_na_only)
+
+vis_miss(preimp_na_analysis[, vars_quest]) #visualize missing data pattern
+table(preimp_na_analysis$ace_na_sum)
+table(preimp_na_analysis$gad7_na_sum)
+table(preimp_na_analysis$phq9_na_sum)
+table(preimp_na_analysis$quest_na_sum)
+colSums(is.na(preimp_na_analysis[, vars_quest]))
+```
+n(preimp_na_analysis)=2042
+
+MAIN DATASET (PRE-IMPUTATION DATASET)
+Determine QUESTTIONNAIRE SUM SCORES of non-imputed data + remove all NAs to proceed with mediation analysis
+```{r}
+preimp_no_na <- preimp_na_analysis[, c( # create new data frame containing relevant variables 
+                                        "pseudonym", 
+                                        "age", 
+                                        "sex", 
+                                        "ses_index", 
+                                        "vf_ace_001", "vf_ace_002", "vf_ace_003", "vf_ace_004", 
+                                        "vf_ace_005", "vf_ace_006", "vf_ace_007", "vf_ace_008", 
+                                        "vf_ace_009", "vf_ace_010", 
+                                        "vf_gad7_001", "vf_gad7_002", "vf_gad7_003", "vf_gad7_004", 
+                                        "vf_gad7_005", "vf_gad7_006", "vf_gad7_007", 
+                                        "vf_phq9_001", "vf_phq9_002", "vf_phq9_003", "vf_phq9_004", 
+                                        "vf_phq9_005", "vf_phq9_006", "vf_phq9_007","vf_phq9_008", 
+                                        "vf_phq9_009", 
+                                        "r_hippo", "r_amy", "l_hippo", "l_amy", 
+                                        "bilat_hippo", "bilat_amy", 
+                                        "lhCortexVol", "rhCortexVol", "TotalGrayVol", 
+                                        "rh_G_front_middle_thickness", "rh_G_front_sup_thickness", 
+                                        "tiv", "cat12_tiv"
+                                        )] 
+preimp_no_na <- mutate_if(preimp_no_na, function(x) !is.character(x), as.numeric) # for next step needed to convert to numeric
+sapply(preimp_no_na, class)
+
+# ACE: determine sum score
+preimp_no_na$ace_pre_imp <- rowSums(preimp_no_na[, vars_ace] == 1, na.rm = TRUE)
+table(preimp_no_na$ace_pre_imp)
+has_missing_ace <- apply(preimp_no_na[, vars_ace], 1, function(x) any(is.na(x))) # Check for NA
+preimp_no_na$ace_pre_imp[has_missing_ace] <- NA # Replace sum score with NA if there are missing values
+table(preimp_no_na$ace_pre_imp)
+table(has_missing_ace) # n=83
+
+#PHQ-9: determine sum score
+preimp_no_na$phq9_pre_imp <- rowSums(preimp_no_na[, vars_phq9], na.rm = TRUE) 
+table(preimp_no_na$phq9_pre_imp)
+has_missing_phq <- apply(preimp_no_na[, vars_phq9], 1, function(x) any(is.na(x)))
+preimp_no_na$phq9_pre_imp[has_missing_phq] <- NA
+table(preimp_no_na$phq9_pre_imp)
+table(has_missing_phq) # n=48
+
+#GAD-7: determine sum score
+preimp_no_na$gad7_pre_imp <- rowSums(preimp_no_na[, vars_gad7], na.rm = TRUE)
+table(preimp_no_na$gad7_pre_imp)
+has_missing_gad <- apply(preimp_no_na[, vars_gad7], 1, function(x) any(is.na(x)))
+preimp_no_na$gad7_pre_imp[has_missing_gad] <- NA
+table(preimp_no_na$gad7_pre_imp)
+table(has_missing_gad) # n=25
+
+preimp_no_na <- preimp_no_na[complete.cases(preimp_no_na[c("ace_pre_imp", "phq9_pre_imp", "gad7_pre_imp")]), ] #remove NAs from dataset for named variables
+
+hist(preimp_no_na$ace_pre_imp, main = "Histogram of ACE sum score after exclusion of NAs, 
+before imputation, before exclusion of outliers (n = 1900)")
+hist(preimp_no_na$phq9_pre_imp, main = "Histogram of PHQ9 sum score after exclusion of NAs, 
+before imputation, before exclusion of outliers (n = 1900)")
+hist(preimp_no_na$gad7_pre_imp, main = "Histogram of GAD7 sum score after exclusion of NAs, 
+before imputation, before exclusion of outliers (n = 1900)")
+
+sum(is.na(preimp_no_na))
+```
+preimp_no_na: n=1900
+
+DETERMINE DLPFC VALUE BASED ON MEAN OF middle frontal gyrus and superior frontal gyrus
+```{r}
+preimp_no_na$dlpfc <- (preimp_no_na$rh_G_front_middle_thickness + preimp_no_na$rh_G_front_sup_thickness) / 2
+```
+
+CREATE AN ORDINAL AND DICHOTOMOUS VARIABLE FOR ACE (0, 1, 2, 3, >=4) AND (0, 1)
+```{r}
+# dichotomous
+preimp_no_na$ace_pre_imp_dich <- ifelse(preimp_no_na$ace_pre_imp == 0, 0, 1) #create dichotomous variable
+
+# ordinal 0-4
+breaks <- c(-Inf, 0, 1, 2, 3, 10) # define the breaks for cut-off points of the ordinal categories
+preimp_no_na$ace_pre_imp_ord_4 <- cut(preimp_no_na$ace_pre_imp, breaks = breaks, #using cut, convert numeric variable into ordinal; using breaks define cut-offs;  
+                                    labels = c(0, 1, 2, 3, 4), include.lowest = TRUE) #using labels determine labels; using include.lowest include lower bound of first category
+table(preimp_no_na$ace_pre_imp) # check if it was done correctly
+table(preimp_no_na$ace_pre_imp_ord_4)
+
+# categories 0, 1-3, 4-10
+breaks <- c(-Inf, 0, 3, 10) # define the breaks for cut-off points of the ordinal categories
+preimp_no_na$ace_pre_imp_categ <- cut(preimp_no_na$ace_pre_imp, breaks = breaks, # using cut, convert numeric variable into ordinal; using breaks define cut-offs;  
+                                    labels = c(0, 1, 2), include.lowest = TRUE) # using labels determine labels; using include.lowest include lower bound of first category
+table(preimp_no_na$ace_pre_imp) # check if it was done correctly
+table(preimp_no_na$ace_pre_imp_categ)
+```
+
+Create an ordinally structured ace variable for non-monotonic relationship test in jasp
+```{r}
+breaks <- c(-Inf, 0, 1, 2, 3, 4, 5, 6, 10) #define the breaks for cut-off points of the ordinal categories
+preimp_no_na$ace_pre_imp_ord_7 <- cut(preimp_no_na$ace_pre_imp, breaks = breaks, #using cut, convert numeric variable into ordinal; using breaks define cut-offs;  
+                                    labels = c(0, 1, 2, 3, 4, 5, 6, 7), include.lowest = TRUE) #using labels determine labels; using include.lowest include lower bound of first category
+
+table(preimp_no_na$ace_pre_imp) #check if it was done correctly
+table(preimp_no_na$ace_pre_imp_ord_7)
+```
+
+CHECK FOR OUTLIERS
+```{r}
+variables_of_interest <- c("ace_pre_imp", "phq9_pre_imp", "gad7_pre_imp") # specify the variables of interest
+
+outliers <- logical(nrow(preimp_no_na)) # create empty logical vector to store outlier flags
+
+for (variable in variables_of_interest) { # calculate mean and standard deviation for the current variable
+  variable_mean <- mean(preimp_no_na[[variable]], na.rm = TRUE)
+  variable_sd <- sd(preimp_no_na[[variable]], na.rm = TRUE)  # Identify data points outside the specified range for the current variable
+  variable_outliers <- preimp_no_na[[variable]] < (variable_mean - 3 * variable_sd) | preimp_no_na[[variable]] > (variable_mean + 3 * variable_sd) # Update the outlier flags
+  outliers <- outliers | variable_outliers
+}
+
+outlier_data <- preimp_no_na[outliers, ] # Subset the dataset to obtain the outliers
+
+preimp_excl_outlier <- preimp_no_na[!(rownames(preimp_no_na) %in% rownames(outlier_data)), ] # exclude cases in outlier_data from preimp_no_na
+
+preimp_excl_outlier$dlpfc <- (preimp_excl_outlier$rh_G_front_middle_thickness + preimp_excl_outlier$rh_G_front_sup_thickness) / 2
+```
+n(preimp_excl_outlier)=1815
+n(ace_mri_data)=2297
+
+PREPARE DATASET FOR IMPUTATION: REMOVE CASES WITH ONLY MISSING VALUES ON SPECIFIC VARIABLES
+EXCLUDE THOSE CASES THAT HAVE MISSING VALUES ON ALL OF THE SES VARIABLES OR ON ALL OF THE QUESTIONNAIRE ITEMS 
+```{r}
+vars_quest_na_only <- rowSums(is.na(ace_mri_data[, vars_quest])) == length(vars_quest) # identify cases that contain only NAs for the questionnaire variables 
+
+ses_data_subset_excl_na <- ace_mri_data %>%
+  mutate(vars_quest_na_only = if_else(rowSums(is.na(select(., vars_quest))) == length(vars_quest), 1, 0)) %>% #create a new variable "vars_quest_na_only" which identifies those cases that have only NAs on the variables in "vars_quest"
+  filter(vars_quest_na_only == 0) %>% #remove those with 1 on the newly created variable, n(removed)=221
+  select(-vars_quest_na_only) # remove the auxiliary variable 
+
+#Compare missing data pattern to before
+ses_missing_analysis_excl_na <- ses_data_subset_excl_na[, c("age", "sex", "job", "income", "education", "vf_ace_001", "vf_ace_002", "vf_ace_003", "vf_ace_004", "vf_ace_005", "vf_ace_006", "vf_ace_007", "vf_ace_008", "vf_ace_009", "vf_ace_010", "vf_gad7_001", "vf_gad7_002", "vf_gad7_003", "vf_gad7_004", "vf_gad7_005", "vf_gad7_006", "vf_gad7_007", "vf_phq9_001", "vf_phq9_002", "vf_phq9_003", "vf_phq9_004", "vf_phq9_005", "vf_phq9_006", "vf_phq9_007","vf_phq9_008", "vf_phq9_009")]
+ses_missing_analysis_excl_na %>% 
+  missing_plot() #missing values map for overview
+
+vars_phq9_na_only <- rowSums(is.na(ses_data_subset_excl_na[, vars_phq9])) == length(vars_phq9) #identify cases that contain only NAs for vars_phq9
+ses_data_subset_excl_na <- ses_data_subset_excl_na %>% #determine how many cases have NAs on all items of PHQ-9
+  mutate(vars_phq9_na_only = if_else(rowSums(is.na(select(., vars_phq9))) == length(vars_phq9), 1, 0))
+table(ses_data_subset_excl_na$vars_phq9_na_only) # n=10
+
+vars_gad7_na_only <- rowSums(is.na(ses_data_subset_excl_na[, vars_gad7])) == length(vars_gad7) #identify cases that contain only NAs for vars_gad7
+ses_data_subset_excl_na <- ses_data_subset_excl_na %>% #determine how many cases have NAs on all items of GAD-7
+  mutate(vars_gad7_na_only = if_else(rowSums(is.na(select(., vars_gad7))) == length(vars_gad7), 1, 0))
+table(ses_data_subset_excl_na$vars_gad7_na_only) # n=12
+
+ses_data_subset_excl_na_quest_phq_gad <- ses_data_subset_excl_na %>%
+  filter(vars_phq9_na_only == 0) %>% # n=10
+  filter(vars_gad7_na_only == 0) %>% # n=12 after removal of phq9 variables
+  select(-vars_phq9_na_only) %>%
+  select(-vars_gad7_na_only) # n(removed)=20
+
+ses_missing_analysis_excl_na_quest_phq_gad <- ses_data_subset_excl_na_quest_phq_gad[, c("age", "sex", "job", "income", "education", "vf_ace_001", "vf_ace_002", "vf_ace_003", "vf_ace_004", "vf_ace_005", "vf_ace_006", "vf_ace_007", "vf_ace_008", "vf_ace_009", "vf_ace_010", "vf_gad7_001", "vf_gad7_002", "vf_gad7_003", "vf_gad7_004", "vf_gad7_005", "vf_gad7_006", "vf_gad7_007", "vf_phq9_001", "vf_phq9_002", "vf_phq9_003", "vf_phq9_004", "vf_phq9_005", "vf_phq9_006", "vf_phq9_007","vf_phq9_008", "vf_phq9_009")] #Compare missing data pattern to before
+ses_missing_analysis_excl_na_quest_phq_gad %>% 
+  missing_plot() #missing values map for overview
+
+vars_ace_na_only <- rowSums(is.na(ses_data_subset_excl_na_quest_phq_gad[, vars_ace])) == length(vars_ace) #identify cases that contain only NAs for vars_ace
+table(vars_ace_na_only) # n(only NA)=14
+ses_data_subset_excl_na_quest_phq_gad_ace <- ses_data_subset_excl_na_quest_phq_gad %>%
+  mutate(vars_ace_na_only = if_else(rowSums(is.na(select(., vars_ace))) == length(vars_ace), 1, 0)) %>%
+  filter(vars_ace_na_only == 0) %>%
+  select(-vars_ace_na_only) # n(removed)=14
+ace_mri_preimp <- ses_data_subset_excl_na_quest_phq_gad_ace
+
+ses_missing_analysis_excl_na_quest_phq_gad_ace <- ace_mri_preimp[, c("age", "sex", "job", "income", "education", "vf_ace_001", "vf_ace_002", "vf_ace_003", "vf_ace_004", "vf_ace_005", "vf_ace_006", "vf_ace_007", "vf_ace_008", "vf_ace_009", "vf_ace_010", "vf_gad7_001", "vf_gad7_002", "vf_gad7_003", "vf_gad7_004", "vf_gad7_005", "vf_gad7_006", "vf_gad7_007", "vf_phq9_001", "vf_phq9_002", "vf_phq9_003", "vf_phq9_004", "vf_phq9_005", "vf_phq9_006", "vf_phq9_007","vf_phq9_008", "vf_phq9_009")]
+ses_missing_analysis_excl_na_quest_phq_gad_ace %>% 
+  missing_plot(title = "Missing values plot of SES and questionnaire data (n=2.042)") 
+```
+09/07/2023 + 06/03/2024 ace_mri_preimp n=2042
+
+ADAPTATION DATA TYPES 
+```{r}
+str(ace_mri_preimp)# check current data type
+sum(is.na(ace_mri_preimp))
+
+for (i in  9:18) {
+  ace_mri_preimp[, i] <- as.logical(as.integer(ace_mri_preimp[, i]))
+}
+ace_mri_preimp$sex <- as.logical(ace_mri_preimp$sex)
+
+for (i in 26:34) { # change type of PHQ variables from numeric to categorical (ordered) (necessary for correct imputation method)
+  ace_mri_preimp[[i]] <- cut(ace_mri_preimp[[i]], 
+                             breaks = 4,
+                             labels = c("0", "1", "2", "3"), 
+                             ordered = TRUE)
+  names(ace_mri_preimp)[i] <- paste0(names(ace_mri_preimp)[i])
+}
+
+for (i in 19:25) { # change type of GAD variables from numeric to categorical (ordered) (necessary for correct imputation method)
+  ace_mri_preimp[[i]] <- cut(ace_mri_preimp[[i]], 
+                             breaks = 4,
+                             labels = c("0", "1", "2", "3"), 
+                             ordered = TRUE)
+  names(ace_mri_preimp)[i] <- paste0(names(ace_mri_preimp)[i])
+}
+
+ace_mri_preimp <- ace_mri_preimp %>% #declare NAs as NAs because somehow some of them have been saved as values
+  mutate(
+    job = replace(job, job == "NA", NA),
+    income = replace(income, income == "NA", NA),
+    education = replace(education, education == "NA", NA)
+  )
+
+sum(is.na(ace_mri_preimp$education))
+sum(is.na(ace_mri_preimp))
+```
+09/07/2023 + 06/03/2024 Remaining NAs in SES variables n=92. Total remaining NAs n=629.
+
+Save as csv files
+```{r}
+# Save preimp_no_na.csv dataframe (earlier ace_pre_imp) which will be used for analyses 
+write.csv(preimp_no_na, file = "preimp_no_na_1900.csv", row.names = FALSE)
+
+# Save preimp_no_na_excl_outlier.csv dataframe which will be used for sensitivity analyses 
+write.csv(preimp_excl_outlier, file = "preimp_no_na_excl_outlier_1815.csv", row.names = FALSE)
+
+# Save preimp_prepped_for_imputation dataframe which will be used to impute missing data in "02_imputation.Rmd"
+write.csv(ace_mri_preimp, file = "preimp_prepped_for_imputation_2042.csv", row.names = FALSE)
+
+#Save pseudonym values of all cases in the n=1900 sample
+length(preimp_no_na$pseudonym) # check for number of cases 
+sum(is.na(preimp_no_na$pseudonym)) # check for NAs
+pseudonym_values_1900 <- preimp_no_na$pseudonym
+values_string_1900 <- paste(pseudonym_values_1900, collapse = "\n") # Create a string with values separated by newline character
+write(values_string_1900, "pseudonym_values_preimp_no_na_1900.txt")  # Write the string to a text file
+
+#Save pseudonym values of all cases in the n=1900 sample
+length(preimp_excl_outlier$pseudonym) # check for number of cases 
+sum(is.na(preimp_excl_outlier$pseudonym)) # check for NAs
+pseudonym_values_1815 <- preimp_excl_outlier$pseudonym
+values_string_1815 <- paste(pseudonym_values_1815, collapse = "\n") # Create a string with values separated by newline character
+write(values_string_1815, "pseudonym_values_preimp_no_na_excl_outl_1815.txt")  # Write the string to a text file
+```
