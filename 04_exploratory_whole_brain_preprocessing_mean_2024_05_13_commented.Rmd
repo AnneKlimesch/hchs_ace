@@ -1,0 +1,94 @@
+---
+title: "explorative_mediation"
+output: html_document
+date: "2023-11-24"
+author: A. Klimesch
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Load packages
+```{r}
+library(dplyr)
+library(haven)
+library(foreign)
+library(ggplot2)
+library(readxl)
+library(Hmisc)
+```
+
+Load main analysis dataset
+```{r}
+preimp <- read.csv("C:path_to_your_data/preimp_no_na_1900.csv")
+```
+
+
+Load whole brain dataset von VBM: ACE4 lower than ACE0
+```{r, warning=FALSE, results='hide'}
+whole_brain_4_lt_0 <- read_excel("C:path_to_data.xlsx")
+```
+
+VBM: ACE4 lower than ACE0
+Rename variables of whole brain data set 
+```{r}
+colnames(whole_brain_4_lt_0)[colnames(whole_brain_4_lt_0) == "ID"] <- "pseudonym"
+whole_brain_4_lt_0$pseudonym <- trimws(whole_brain_4_lt_0$pseudonym) # remove spaces from pseudonym variable
+
+print(names(whole_brain_4_lt_0))
+whole_brain_4_lt_0 <- whole_brain_4_lt_0 %>%
+  rename(
+    orbital_acc_olf = `1_ACE4_lt_ACE0_k11036_26,40,42_L_R_SFG_Orbital_ACC_OLF`,
+    l_ifg_triangular = `2_ACE4_lt_ACE0_k1658_-44,42,6_L_IFG_triangular`,
+    r_middle_temporalG = `3_ACE4_lt_ACE0_k660_58,-14,-12_R_middle_temporalG`,
+    l_inferior_parietal = `4_ACE4_lt_ACE0_k437_50,-40,50_L_inferior_parietal`,
+    l_rolandic_operc_insula = `5_ACE4_lt_ACE0_k411_-40,-3,-10_L_Rolandic_Operc_Insula`,
+    l_lobe8_cerebellum = `6_ACE4_lt_ACE0_k401_-21,-70,-45_L_lobeVIII_cerebellum`,
+    l_middle_occipital_g = `7_ACE4_lt_ACE0_k264_-38,-76,3_L_middle_occipitalG`,
+    l_mtg_1 = `8_ACE4_lt_ACE0_k255_-62,-62,-3_L_MTG`,
+    r_itg_fusiform = `9_ACE4_lt_ACE0_k253_51,-42,-24_R_ITG_fusiform`,
+    l_middle_cingulate = `10_ACE4_lt_ACE0_k248_-4,21,34_left_middle_cingulate`,
+    l_l_middletemporal = `11_ACE4_lt_ACE0_k238_-52,-32,-10_L_L_middletemporal`,
+    r_lobe_4_cerebellum = `12_ACE4_lt_ACE0_k229_right_lobe_IV_cerebellum`,
+    l_middle_frontal = `13_ACE4_lt_ACE0_k200_-50,6,44_left_middle_frontal`,
+    r_anterior_orbital_g_14 = `14_ACE4_lt_ACE0_k200_36,40,-18_R_anterior_orbitalG`,
+    l_fusiform_g = `15_ACE4_lt_ACE0_k128_-28,3,-45_L_FusiformG`,
+    r_itg = `16_ACE4_lt_ACE0_k123_62,-56,-9_R_ITG`,
+    r_r_inf_occipital_g = `17_ACE4_lt_ACE0_k106_48,-82,-6_R_R_inf_OccipitalG`,
+    r_mfg = `18_ACE4_lt_ACE0_k88_39,42,38_R_MFG`,
+    l_mtg_2 = `19_ACE4_lt_ACE0_k83_-64,-22,-6_L_MTG`,
+    r_precentral_g = `20_ACE4_lt_ACE0_k77_51,14,30_R_precentralG`,
+    l_stg = `21_ACE4_lt_ACE0_k60_-50,-27,2_L_STG`,
+    l_mtg_3 = `22_ACE4_lt_ACE0_k56_56,-66,-44_L_MTG`)
+print(names(whole_brain_4_lt_0))
+```
+
+Merge datasets and filter those, that were not included in VBM// filter those with ACE=0 and ACE=4+
+```{r}
+preimp_subset <- preimp %>% 
+  select(pseudonym, age, sex, ses_index, ace_pre_imp, phq9_pre_imp, gad7_pre_imp, ace_pre_imp_ord_4, cat12_tiv) # select those variables that should be included in new df
+whole_brain_4_lt_0 <- merge(whole_brain_4_lt_0, preimp_subset, by = "pseudonym", all = TRUE) # Merge the dataframes using the subset
+head(whole_brain_4_lt_0) # Display the first few rows of the merged dataframe to confirm changes
+
+whole_brain_4_lt_0_filt <- whole_brain_4_lt_0[whole_brain_4_lt_0$ace_pre_imp_ord_4 %in% c(0, 4), ] # Remove rows where ace_pre_imp_ord_4 is not 0 or 4
+head(whole_brain_4_lt_0_filt) # Display the first few rows of the filtered dataframe to confirm changes
+```
+
+Prepare required subset of dataset
+```{r}
+str(whole_brain_4_lt_0_filt) # check structure of dataframe - all variables numeric 
+
+whole_brain_4_lt_0_filt <- whole_brain_4_lt_0_filt %>% # create a variable with the mean gmv of the given variables
+  mutate(mean_gmv_4_lt_0 = rowMeans(across(c("orbital_acc_olf", "l_ifg_triangular", "r_middle_temporalG", "l_inferior_parietal",
+                                             "l_rolandic_operc_insula", "l_lobe8_cerebellum", "l_middle_occipital_g", 
+                                             "l_mtg_1", "r_itg_fusiform", "l_middle_cingulate", "l_l_middletemporal", 
+                                             "r_lobe_4_cerebellum", "l_middle_frontal", "r_anterior_orbital_g_14", 
+                                              "l_fusiform_g", "r_itg", "r_r_inf_occipital_g", 
+                                             "r_mfg", "l_mtg_2", "r_precentral_g", "l_stg", "l_mtg_3")), na.rm = TRUE))
+```
+
+Save whole_brain_sub dataframe
+```{r}
+write.csv(whole_brain_4_lt_0_filt, file = "whole_brain_4_lt_0_1119.csv", row.names = FALSE)
+```

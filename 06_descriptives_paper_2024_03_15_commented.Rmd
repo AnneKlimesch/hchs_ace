@@ -1,0 +1,174 @@
+---
+title: "descriptives"
+output: html_document
+date: "2023-11-24"
+author: A. Klimesch
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Load libraries
+```{r}
+library(psych)
+library(knitr)
+library(tidyverse)
+library(sjPlot)
+library(gridExtra)
+library(dplyr)
+```
+
+Load dataset
+```{r}
+preimp <- read.csv("C:path_to_data/preimp_no_na_1900.csv")
+preimp_excl_outl <- read.csv("C:path_to_data/preimp_no_na_excl_outlier_1815.csv")
+postimp <- read.csv("C:path_to_data/postimp_1950.csv")
+postimp_excl_outl <- read.csv("C:path_to_data/postimp_excl_outlier_1859.csv")
+```
+
+Retrieving descriptive information for writing the paper:
+```{r}
+# Calculate frequencies and percentages with respect to the whole sample size
+ace_frequencies <- preimp %>%
+  select(vf_ace_001:vf_ace_010) %>%  # Select only the target variables
+  pivot_longer(cols = everything(), names_to = "variable", values_to = "value") %>%
+  group_by(variable, value) %>%
+  summarise(Frequency = n(), .groups = 'drop') %>%
+  mutate(Percentage = Frequency / 1900 * 100)  # Calculate percentage relative to total sample size
+# View the results
+print(ace_frequencies)
+
+###AGE
+table(preimp$age)
+age_groups <- cut(preimp$age, breaks = c(46, 55, 65, 75, Inf), labels = c("46-55", "56-65", "66-75", "75+")) # Create four age groups
+age_group_counts <- table(age_groups) # Count the number of individuals in each age group
+age_group_percentages <- prop.table(age_group_counts) * 100 # Calculate the percentage in each age group
+print("Number of individuals in each age group:") # Display the results for age groups
+print(age_group_counts)
+print("\nPercentage of individuals in each age group:")
+print(age_group_percentages)
+
+##AGE BY SEX
+age_sex_group_counts <- table(preimp$sex, age_groups) # Split the dataset by sex and count individuals in each age group for each sex
+age_sex_group_percentages <- prop.table(age_sex_group_counts, margin = 1) * 100 # Calculate the percentage in each age group for each sex
+print("Number of individuals in each age group by sex:") # Display the results for age groups by sex
+print(age_sex_group_counts)
+print("\nPercentage of individuals in each age group by sex:")
+print(age_sex_group_percentages)
+
+###SES INDEX
+ses_index_groups <- cut(preimp$ses_index, breaks = c(3, 8, 15, 21), labels = c("3-8", "9-15", "16-21")) # Create three SES index groups
+ses_index_counts <- table(ses_index_groups) # Count the number of individuals in each SES index group
+ses_index_percentages <- prop.table(ses_index_counts) * 100 # Calculate the percentage in each SES index group
+print("Number of individuals in each SES index group:") # Display the results for SES index groups
+print(ses_index_counts)
+print("\nPercentage of individuals in each SES index group:")
+print(ses_index_percentages)
+
+##SES INDEX BY SEX
+ses_index_sex_group_counts <- table(preimp$sex, ses_index_groups) # Split the dataset by sex and count individuals in each SES index group for each sex
+ses_index_sex_group_percentages <- prop.table(ses_index_sex_group_counts, margin = 1) * 100 # Calculate the percentage in each SES index group for each sex
+print("Number of individuals in each SES index group by sex:") # Display the results for SES index groups by sex
+print(ses_index_sex_group_counts)
+print("\nPercentage of individuals in each SES index group by sex:")
+print(ses_index_sex_group_percentages)
+
+###ACE score
+ace_score_groups <- cut(preimp$ace_pre_imp, breaks = c(-1, 0, 10), labels = c("0", "1-10"))
+ace_score_counts <- table(ace_score_groups) # Count the number of individuals in each ACE score group
+ace_score_percentages <- prop.table(ace_score_counts) * 100 # Calculate the percentage in each ACE score group
+print("Number of individuals in each ACE score group:") # Display the results for ACE score groups
+print(ace_score_counts)
+print("\nPercentage of individuals in each ACE score group:")
+print(ace_score_percentages)
+
+##ACE SCORE BY SEX
+ace_score_sex_group_counts <- table(preimp$sex, ace_score_groups) # Split the dataset by sex and count individuals in each ACE score group for each sex
+ace_score_sex_group_percentages <- prop.table(ace_score_sex_group_counts, margin = 1) * 100 # Calculate the percentage in each ACE score group for each sex
+print("Number of individuals in each ACE score group by sex:") # Display the results for ACE score groups by sex
+print(ace_score_sex_group_counts)
+print("\nPercentage of individuals in each ACE score group by sex:")
+print(ace_score_sex_group_percentages)
+
+###PHQ-9
+phq9_score_groups <- cut(preimp$phq9_pre_imp, breaks = c(-1, 4, 9, 14, 19, 27),# Create five PHQ-9 sum score groups
+                         labels = c("Minimal (0-4)", "Mild (5-9)", "Moderate (10-14)",
+                                    "Moderately Severe (15-19)", "Severe (20-27)"))
+phq9_score_percentages <- prop.table(table(phq9_score_groups)) * 100 # Calculate the percentage in each PHQ-9 sum score group
+print("Percentage of individuals in each PHQ-9 sum score group:") # Display the results for PHQ-9 sum score groups
+print(phq9_score_percentages)
+
+##PHQ-) BY SEX
+phq9_score_sex_group_percentages <- prop.table(table(preimp$sex, phq9_score_groups), margin = 1) * 100 # Split the dataset by sex and calculate the percentage in each PHQ-9 sum score group for each sex
+print("Percentage of individuals in each PHQ-9 sum score group by sex:") # Display the results for PHQ-9 sum score groups by sex
+print(phq9_score_sex_group_percentages) 
+
+###GAD-7
+gad7_score_groups <- cut(preimp$gad7_pre_imp, breaks = c(-1, 4, 9, 14, 21), # Create four GAD-7 anxiety score groups
+                         labels = c("Minimal (0-4)", "Mild (5-9)", "Moderate (10-14)", "Severe (15-21)"))
+gad7_score_percentages <- prop.table(table(gad7_score_groups)) * 100 # Calculate the percentage in each GAD-7 anxiety score group
+print("Percentage of individuals in each GAD-7 anxiety score group:") # Display the results for GAD-7 anxiety score groups
+print(gad7_score_percentages) 
+
+##GAD-7 BY SEX
+gad7_score_sex_group_percentages <- prop.table(table(preimp$sex, gad7_score_groups), margin = 1) * 100 # Split the dataset by sex and calculate the percentage in each GAD-7 anxiety score group for each sex
+print("Percentage of individuals in each GAD-7 anxiety score group by sex:") # Display the results for GAD-7 anxiety score groups by sex
+print(gad7_score_sex_group_percentages)
+```
+
+DESCRIPTIVES BEFORE IMPUTATION
+```{r}
+#determine descriptives of original dataset
+descriptive_vars_pre <- preimp[, c("age", "sex",# select variables relevant for descriptives, 
+                                         "ses_index", 
+                                         "ace_pre_imp_ord_4",
+                                         "phq9_pre_imp",
+                                         "gad7_pre_imp")] 
+
+describe_data <- function(data) {
+  data %>%
+    summarise(across(everything(), list(
+      mean = ~mean(., na.rm = TRUE),
+      sd = ~sd(., na.rm = TRUE),
+      median = ~median(., na.rm = TRUE),
+      min = ~min(., na.rm = TRUE),
+      max = ~max(., na.rm = TRUE)
+    )))
+}
+descriptive_stats <- describe_data(descriptive_vars_pre)
+
+
+
+
+p <- descriptive_vars_pre %>%
+  group_by(sex) %>%
+  do(plot = plot_frq(.$phq9_pre_imp, xlim = c(9, 31), ylim = c(0, 400), 
+                     errorbar.color = "black", show.n = FALSE))
+grid.arrange(grobs = p$plot, ncol = 2)  # Adjust the grid layout
+
+plot_grpfrq(
+  var.cnt = descriptive_vars_pre$sex, 
+  var.grp = descriptive_vars_pre$phq9_pre_imp, show.n = FALSE)
+
+plot_xtab(
+  x   = descriptive_vars_pre$ace_pre_imp, 
+  grp = descriptive_vars_pre$phq9_pre_imp, 
+  margin  = "row", 
+  bar.pos = "stack",
+  show.summary = TRUE,
+  coord.flip   = TRUE,
+  show.n = FALSE)
+```
+
+sample descriptives post imp excl outlier
+```{r}
+descriptive_vars <- postimp_excl_outl[, c("age", "sex", "ses_index", # select variables relevant for descriptives, 
+                                         "ace_postimp",
+                                         "phq9_postimp",
+                                         "gad7_postimp")] 
+
+stats.table <- as.data.frame(describe(descriptive_vars))
+descr.table <- cbind(row.names(stats.table), stats.table)
+nice_table(descr.table, title = c("Descriptive statistics of after imputation"))
+```

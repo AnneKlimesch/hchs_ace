@@ -1,0 +1,169 @@
+---
+title: "2024_02_main_hypothesis_non_monotonic"
+output: html_document
+date: "2024-02-05"
+author: A.Klimesch
+references: Datacamp course "Generalized Linear Models in R"; OpenAI. (2023). ChatGPT (February 2024 version) [Large language model]. https://chat.openai.com/chat
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Load packages
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(GGally)  # for exploring relationships between pairs of variables
+library(mgcv) 
+library(gridExtra) # to save combined plots
+```
+
+Load dataset
+```{r}
+preimp_no_na <- read.csv("C:path_to_data/preimp_no_na_1900.csv")
+```
+
+CHECK NON-MONOTONIC RELATIONSHIP FOR preimp_no_na DATASET
+Scatterplots preimp_no_na
+```{r}
+plot_relationship <- function(data, x_var, y_var, x_label = x_var, y_label = y_var, title = "Scatterplot") {
+  p <- data %>%
+    ggplot(aes_string(x = x_var, y = y_var)) +
+    geom_jitter(width = 0.2, height = 0.2) +
+    geom_smooth(method = "lm", col = "red") +
+    geom_smooth(method = "loess", col = "blue") +
+    labs(title = title, x = x_label, y = y_label)
+  
+  # Adjust for specific combinations
+  if (y_var %in% c("phq9_pre_imp", "gad7_pre_imp")) {
+    p <- p + geom_smooth(method = "glm", method.args = list(family = "poisson"), col = "yellow")
+  }
+  
+  # Generate filename based on x_var and y_var
+  filename <- paste(x_var, y_var, "scatterplot.png", sep = "_")
+  full_path <- file.path(save_path, filename)
+  
+  # Save the plot
+  ggsave(full_path, plot = p, width = 8, height = 6)
+}
+
+# Create a folder for the plots if it doesn't already exist
+save_path <- "C:/your_path/scatterplots"
+if (!dir.exists(save_path)) {
+  dir.create(save_path)
+}
+
+# Define your variable combinations
+x_vars <- c("ace_pre_imp_ord_7", "phq9_pre_imp", "gad7_pre_imp")
+y_vars <- c("bilat_hippo", "dlpfc", "bilat_amy", "phq9_pre_imp", "gad7_pre_imp")
+
+# Loop through each combination and plot
+for (x in x_vars) {
+  for (y in y_vars) {
+    plot_relationship(preimp_no_na, x, y)
+  }
+}
+```
+
+Check for normality of residuals of continuous variables (ChatGPT 4 was used)
+```{r}
+p1 <- ggplot(preimp_no_na,aes(sample=bilat_amy)) + 
+  geom_qq() + 
+  geom_qq_line() + 
+  ggtitle('Amygdala')
+
+p2 <- ggplot(preimp_no_na,aes(sample=dlpfc)) + 
+  geom_qq() + 
+  geom_qq_line()+ 
+  ggtitle('DLPFC')
+
+p3 <- ggplot(preimp_no_na,aes(sample=bilat_hippo)) + 
+  geom_qq() + 
+  geom_qq_line() + 
+  ggtitle('Hippo')
+
+combined_plot <- arrangeGrob(p1, p2, p3, nrow = 1) # Combine plots without displaying them
+plots_directory <- "C:/your_path/normality_plot" # define directory
+
+if (!dir.exists(plots_directory)) { # Check if the directory exists, if not, create it
+  dir.create(plots_directory)
+}
+
+plot_filename <- "check_for_normality_of_residuals.png" # Define a unique filename for the new plot
+save_path <- file.path(plots_directory, plot_filename) # Full path to save the new plot
+ggsave(file = save_path, plot = combined_plot, width = 20, height = 7, units = "cm") # Save the plot
+```
+
+Poisson regression for behavioral variables (using datacamp code)
+```{r}
+poisson_phq9 <- glm(phq9_pre_imp ~ ace_pre_imp_ord_7, data = preimp_no_na, family = "poisson") # fit y predicted by x with data.frame preimp_no_na using the poisson family
+print(poisson_phq9)
+
+poisson_gad7 <- glm(gad7_pre_imp ~ ace_pre_imp_ord_7, data = preimp_no_na, family = "poisson")
+print(poisson_gad7)
+
+coef(poisson_phq9) # Extract the regression coefficients
+coef(poisson_gad7)
+confint(poisson_phq9) # Extract the confidence intervals
+confint(poisson_gad7)
+summary(poisson_phq9) # Examine the outputs using summary
+summary(poisson_gad7)
+```
+
+For comparison: Linear regression with gaussian distribution for neuro variables (using datacamp code)
+```{r}
+gaussian_dlpfc <- glm(dlpfc ~ ace_pre_imp_ord_7, data = preimp_no_na, family = "gaussian") # fit y predicted by x with data.frame preimp_no_na using the poisson family
+print(gaussian_dlpfc)
+summary(gaussian_dlpfc)
+
+gaussian_hippo <- glm(bilat_hippo ~ ace_pre_imp_ord_7, data = preimp_no_na, family = "gaussian")
+print(gaussian_hippo)
+summary(gaussian_hippo)
+
+gaussian_amy <- glm(bilat_amy ~ ace_pre_imp_ord_7, data = preimp_no_na, family = "gaussian")
+print(gaussian_amy)
+summary(gaussian_amy)
+```
+
+Perform several generalized additive models and create their pdp plots to validate the results on non-monotonic relationships (ChatGPT 4 was used)
+```{r}
+output_dir <- "C:/your_path/pdp_plots"
+
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir, recursive = TRUE)
+}
+
+variable_pairs <- list( # define your variable pairs and covariates
+  c("ace_pre_imp_ord_7", "bilat_amy"),
+  c("ace_pre_imp_ord_7", "bilat_hippo"),
+  c("ace_pre_imp_ord_7", "dlpfc"),
+  c("bilat_hippo", "phq9_pre_imp"),
+  c("bilat_amy", "phq9_pre_imp"),
+  c("dlpfc", "phq9_pre_imp"),
+  c("bilat_hippo", "gad7_pre_imp"),
+  c("bilat_amy", "gad7_pre_imp"),
+  c("dlpfc", "gad7_pre_imp")
+)
+
+for (pair in variable_pairs) { # Loop through each pair, fit a GAM, and print the summary
+  response <- pair[2]
+  predictor <- pair[1]
+  
+  formula <- as.formula(paste(response, "~ s(", predictor, ", k=5) + age + sex", sep = "")) # formula with specified 'k' value to limit the complexity of the smooth
+  
+  gam_model <- gam(formula, data = preimp_no_na, method = "REML") # Fit the GAM model
+  
+  filename <- sprintf("pdp_of_gam_preimp_%s_vs_%s.png", predictor, response)
+  full_path <- file.path(output_dir, filename)
+  
+  png(file = full_path, width = 800, height = 600) # You can adjust the size as needed
+  
+  plot(gam_model, select = 1, main = paste("PDP for", predictor, "on", response))
+  dev.off()
+  
+  print(summary(gam_model)) # Print the summary of the model and plot
+}
+```
+The only significant GAM is the one with x = bilat_amy, y = gad7_pre_imp BUT their plot shows that the CIs cross 0, thus the significant result only holds for certain ranges of bilat_amy and we cannt conclude a non-monotonic relationship between x and y with certainty.  
+
