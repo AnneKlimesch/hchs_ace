@@ -1,0 +1,288 @@
+---
+title: "mediation_imputation"
+output: html_document
+date: "2023-11-24"
+author: A. Klimesch
+note: This script performs a multiple imputation on the "preimp_prepped_for_imputation.csv" dataset (n=2042) which was prepared in "01_preprocessing_preimp.Rmd". Then, the sum scores of the questionnaires, ordinal questionnaire variables, and dlpfc values are determined for the newly created dataset and outliers are removed. The output of the script are two data files "postimp.csv" and "postimp_excl_outlier.csv".
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Load libraries
+```{r}
+library(tidyverse)
+library(mice)     #for imputation
+library(ggplot2) # for comparison of pre- and post-imp distribution 
+library(finalfit) # for missing plot function
+```
+
+Load dataset
+```{r}
+preimp <- read.csv("C:path_to_your_file/preimp_prepped_for_imputation_2042.csv")
+```
+
+MULTIPLE IMPUTATION (Reference: https://rpubs.com/kaz_yos/mice-exclude)
+```{r, results='hide'}
+allVars <- names(preimp) # save all variable names in the data frame in a list
+
+missVars <- names(preimp)[colSums(is.na(preimp)) > 0] # save names of variables with NAs in a list
+
+predictorMatrix <- matrix(0, ncol = length(allVars), nrow = length(allVars)) # create mice predictor matrix (Rows correspond to target variables;  A value of '1' means that the column variable is used as a predictor for the target variable (in the rows)) 
+rownames(predictorMatrix) <- allVars
+colnames(predictorMatrix) <- allVars
+
+imputerVars <- c("vf_ace_001", "vf_ace_002", "vf_ace_003", "vf_ace_004", "vf_ace_005", "vf_ace_006", "vf_ace_007", "vf_ace_008", "vf_ace_009", "vf_ace_010", "vf_gad7_001", "vf_gad7_002", "vf_gad7_003", "vf_gad7_004", "vf_gad7_005", "vf_gad7_006", "vf_gad7_007", "vf_phq9_001", "vf_phq9_002", "vf_phq9_003", "vf_phq9_004", "vf_phq9_005", "vf_phq9_006", "vf_phq9_007", "vf_phq9_008", "vf_phq9_009", "age", "sex", "job", "income", "education", "ind_income") # variables that will inform the imputation
+
+imputerVars <- intersect(unique(imputerVars), allVars) #  remove duplicate names in "imputer_vars"; take the two lists and keep only those variables that exist in both; this should be all 32 variables defined above 
+imputerVars
+imputerMatrix <- predictorMatrix # create a copy of predictor_matrix
+imputerMatrix[,imputerVars] <- 1 #  set the imputer_vars in the predictor_matrix to 1 to indicate that they are predictors
+imputerMatrix
+
+imputedVars <- intersect(unique(imputerVars), missVars) # remove duplicate names in "imputer_vars"; take the two lists and keep only those variables that exist in both
+imputedVars # check which variables are left; age and sex were removed because they do not contain NAs 
+imputedMatrix <- predictorMatrix
+imputedMatrix[imputedVars,] <- 1 # set the imputed_vars in the imputed_matrix to 1 to indicate that they are targets
+imputedMatrix
+
+predictorMatrix <- imputerMatrix * imputedMatrix # construct a full predictor matrix (rows: imputed variables; cols: imputer variables)
+diag(predictorMatrix) <- 0 # diagonals must be zeros because a variable cannot impute itself
+predictorMatrix
+
+set.seed(156)
+dryMice <- mice(data = preimp, m = 1, predictorMatrix = predictorMatrix, maxit = 0, seed = 156) # perform a pilot-imputation without imputing NAs (maxit = 0)
+dryMice$method # get the imputation method assigned to each variable (pmm = predictive mean matching, logreg = logistic regression, "" = no imputation planned~~)
+predictorMatrix <- dryMice$predictorMatrix # update predictor matrix
+options(max.print = 9999, width = 200) #adjust max.print value to make whole imputation matrix visible 
+print(predictorMatrix) # print whole imputation matrix
+imputerVars <- colnames(predictorMatrix)[colSums(predictorMatrix) > 0] #Imputers (non-zero columns of predictorMatrix)
+imputerVars 
+imputedVars <- rownames(predictorMatrix)[rowSums(predictorMatrix) > 0] #Imputed (non-zero rows of predictorMatrix)
+imputedVars 
+setdiff(imputerVars, imputedVars) # imputers that are complete
+intersect(imputerVars, imputedVars) # imputers with NAs
+setdiff(imputedVars, imputerVars) # imputed-only variables without being imputers
+setdiff(missVars, imputedVars) # variables with NAs that are not imputed
+predictorMatrix[rowSums(predictorMatrix) > 0, colSums(predictorMatrix) > 0] # Relevant part of predictorMatrix
+
+set.seed(4280)
+miceout <- mice(data = preimp, m = 5, predictorMatrix = predictorMatrix, method = dryMice$method, maxit = 50, seed = 4280)
+
+completedDatasets <- vector("list", length = 5) # Create an empty list to store the completed datasets
+for (i in 1:5) { # store each completed dataset in the list
+  completedDatasets[[i]] <- complete(miceout, action = i)
+}
+
+actuallyImputedVars <- vector("list", length = 5) # get information on variables actually imputed for each dataset
+for (i in 1:5) {
+  actuallyImputedVars[[i]] <- setdiff(names(preimp)[colSums(is.na(preimp)) > 0], 
+                                      names(completedDatasets[[i]])[colSums(is.na(completedDatasets[[i]])) > 0]) 
+} # Variables that no longer have NAs after imputation
+
+unexpectedlyImputedVars <- vector("list", length = 5) # Get variables that were unexpectedly imputed for each dataset
+for (i in 1:5) {
+  unexpectedlyImputedVars[[i]] <- setdiff(actuallyImputedVars[[i]], imputedVars)
+}
+
+plannedNotImputedVars <- vector("list", length = 5) # Get variables that were planned to be but not imputed for each dataset
+for (i in 1:5) {
+  plannedNotImputedVars[[i]] <- setdiff(imputedVars, actuallyImputedVars[[i]])
+}
+
+stillMissingVars <- vector("list", length = 5) # Get still missing variables for each dataset
+for (i in 1:5) {
+  stillMissingVars[[i]] <- names(completedDatasets[[i]])[colSums(is.na(completedDatasets[[i]])) > 0]
+}
+
+for (i in 1:5) { # Print results for each dataset separately
+  print(actuallyImputedVars[[i]]) #Variables actually imputed
+  print(unexpectedlyImputedVars[[i]]) #Variables unexpectedly imputed
+  print(plannedNotImputedVars[[i]]) #Variables planned but not imputed
+  print(stillMissingVars[[i]]) #Still missing variables
+}
+
+postimp_1 <- complete(miceout,1)
+postimp_2 <- complete(miceout,2)
+postimp_3 <- complete(miceout,3)
+postimp_4 <- complete(miceout,4)
+postimp_5 <- complete(miceout,5)
+
+postimp <-   complete(miceout) # merge imputation sets 
+str(postimp)
+
+imputation_methods <- miceout$method # check if the correct methods for imputation have been used 
+print(imputation_methods)
+nrow(postimp) # 2042
+```
+
+COMPARE DISTRIBUTION BEFORE AND AFTER IMPUTATION 
+```{r}
+variables_to_convert <- c("vf_ace_001", "vf_ace_002", "vf_ace_003", "vf_ace_004", "vf_ace_005", 
+                          "vf_ace_006", "vf_ace_007", "vf_ace_008", "vf_ace_009", "vf_ace_010")
+
+# Loop through each variable and convert
+for(var in variables_to_convert) {
+  postimp[[var]] <- postimp[[var]] == 1
+}
+
+
+plot_folder <- "imputation_quality_check_density_plots" # check if folder exists and if not create it
+if(!dir.exists(plot_folder)) {
+  dir.create(plot_folder)
+}
+
+plots <- list() # Initialize an empty list to store plots
+for(var in imputedVars) { # Loop through each variable and create a density plot
+  plots[[var]] <- ggplot() +
+    geom_density(data = preimp, aes_string(x = var, y = "..density.."), fill = "blue", alpha = 0.4) +
+    geom_density(data = postimp, aes_string(x = var, y = "..density.."), fill = "red", alpha = 0.4) +
+    labs(title = paste("Density Plot of", var, "Pre and Post Imputation"),
+         x = var,
+         y = "Density") +
+    theme_minimal()
+  file_path <- paste0(plot_folder, "/", "density_plot_", var, ".png") # Define the file path within the new folder
+  ggsave(file_path, plot = plots[[var]], width = 10, height = 8) # Save the plot to the specified file path
+}
+
+vars_quest <- c("vf_ace_001", "vf_ace_002", "vf_ace_003", "vf_ace_004", "vf_ace_005", "vf_ace_006", "vf_ace_007", "vf_ace_008", "vf_ace_009", "vf_ace_010", "vf_gad7_001", "vf_gad7_002", "vf_gad7_003", "vf_gad7_004", "vf_gad7_005", "vf_gad7_006", "vf_gad7_007", "vf_phq9_001", "vf_phq9_002", "vf_phq9_003", "vf_phq9_004", "vf_phq9_005", "vf_phq9_006", "vf_phq9_007","vf_phq9_008", "vf_phq9_009") # choose variables 
+for(var in vars_quest) { # create tables of the chosen variables and compare pre-post imputation for each of them 
+  cat("Frequency table for:", var, " - Pre-Imputation\n")
+  print(table(preimp[[var]], useNA = "ifany"))
+  cat("\n") # adds an empty line for readability
+  
+  cat("Frequency table for:", var, " - Post-Imputation\n")
+  print(table(postimp[[var]], useNA = "ifany"))
+  cat("\n\n") # adds two empty lines for readability between variable comparisons
+}
+
+vars_ses <- c("income", "education", "job", "ind_income") # choose variables 
+for(var in vars_ses) { # create tables of the chosen variables and compare pre-post imputation for each of them 
+  cat("Frequency table for:", var, " - Pre-Imputation\n")
+  print(summary(preimp[[var]], useNA = "ifany"))
+  cat("\n") # adds an empty line for readability
+  
+  cat("Frequency table for:", var, " - Post-Imputation\n")
+  print(summary(postimp[[var]], useNA = "ifany"))
+  cat("\n\n") # adds two empty lines for readability between variable comparisons
+}
+```
+
+DETERMINE QUESTTIONNAIRE SUM SCORES OF IMPUTED DATA 
+```{r}
+postimp <- postimp[postimp$education_na != 0, ] 
+postimp <- postimp[postimp$job_na != 0, ]
+postimp <- postimp[postimp$income_na != 0, ]
+nrow(postimp) # 1950
+
+ses_missing_analysis_postimp <- postimp[, c("age", "sex", "job", "income", "education", "vf_ace_001", "vf_ace_002", "vf_ace_003", "vf_ace_004", "vf_ace_005", "vf_ace_006", "vf_ace_007", "vf_ace_008", "vf_ace_009", "vf_ace_010", "vf_gad7_001", "vf_gad7_002", "vf_gad7_003", "vf_gad7_004", "vf_gad7_005", "vf_gad7_006", "vf_gad7_007", "vf_phq9_001", "vf_phq9_002", "vf_phq9_003", "vf_phq9_004", "vf_phq9_005", "vf_phq9_006", "vf_phq9_007","vf_phq9_008", "vf_phq9_009", "r_hippo", "r_amy", "l_hippo", "l_amy", "bilat_hippo", "bilat_amy", "lhCortexVol", "rhCortexVol", "TotalGrayVol", "rh_G_front_middle_thickness", "rh_G_front_sup_thickness")]
+ses_missing_analysis_postimp %>% # check remaining NAs
+  missing_plot()
+
+postimp <- mutate_if(postimp, function(x) !is.character(x), as.numeric) # for next step needed to convert to numeric
+
+#ACE
+column_ace <- which(colnames(postimp) == "vf_ace_001") # Identify column of ace variables
+postimp$ace_postimp <- rowSums(postimp[, column_ace:(column_ace + 9)], na.rm = TRUE) #determine sum scores
+summary(postimp$ace_postimp)
+hist(postimp$ace_postimp, main = "Histogram of ace sum score after imputation")
+
+#PHQ-9
+column_phq9 <- which(colnames(postimp) == "vf_phq9_001")
+postimp$phq9_postimp <- rowSums(postimp[, column_phq9:(column_phq9 + 8)], na.rm = TRUE) 
+summary(postimp$phq9_postimp)
+hist(postimp$phq9_postimp, main = "Histogram of phq sum score after imputation")
+
+#GAD-7
+column_gad7 <- which(colnames(postimp) == "vf_gad7_001") 
+postimp$gad7_postimp <- rowSums(postimp[, column_gad7:(column_gad7 + 6)], na.rm = TRUE)
+summary(postimp$gad7_postimp)
+hist(postimp$gad7_postimp, main = "Histogram of gad sum score after imputation")
+```
+
+DETERMINE DLPFC VALUE BASED ON MEAN OF middle frontal gyrus and superior frontal gyrus
+```{r}
+postimp$dlpfc <- (postimp$rh_G_front_middle_thickness + postimp$rh_G_front_sup_thickness) / 2
+
+hist(preimp$rh_G_front_middle_thickness)
+hist(postimp$rh_G_front_middle_thickness) 
+hist(preimp$rh_G_front_sup_thickness)
+hist(postimp$rh_G_front_sup_thickness)
+```
+
+CREATE AN ORDINAL AND DICHOTOMOUS VARIABLE FOR ACE (0, 1, 2, 3, >=4) AND (0, 1)
+```{r}
+# dichotomous
+postimp$ace_postimp_dich <- ifelse(postimp$ace_postimp == 0, 0, 1) #create dichotomous variable
+
+# ordinal 0-4
+breaks <- c(-Inf, 0, 1, 2, 3, 10) #define the breaks for cut-off points of the ordinal categories
+postimp$ace_postimp_ord_4 <- cut(postimp$ace_postimp, breaks = breaks, #using cut, convert numeric variable into ordinal; using breaks define cut-offs;  
+                                    labels = c(0, 1, 2, 3, 4), include.lowest = TRUE) #using labels determine labels; using include.lowest include lower bound of first category
+table(postimp$ace_postimp) #check if it was done correctly
+table(postimp$ace_postimp_ord_4)
+```
+
+CHECK FOR OUTLIERTS
+```{r}
+summary(postimp) #take a look at min and max values
+ses_boxplot <- c("job", "income", "education") #select variables for outlier inspection 
+ace_boxplot <- c("ace_postimp")
+phq_boxplot <- c("phq9_postimp")
+gad_boxplot <- c("gad7_postimp")
+boxplot(postimp[, ses_boxplot]) # create box plots for the selected variables (separately because of differing y-axes)
+boxplot(postimp[, ace_boxplot], main = "Boxplot ACE sum scores after imputation")
+boxplot(postimp[, phq_boxplot], main = "Boxplot PHQ-9 sum scores after imputation")
+boxplot(postimp[, gad_boxplot], main = "Boxplot GAD-7 sum scores after imputation")
+
+variables_of_interest <- c("ace_postimp", "phq9_postimp", "gad7_postimp") # Specify the variables of interest
+
+outliers <- logical(nrow(postimp)) # Initialize an empty logical vector to store outlier flags
+
+for (variable in variables_of_interest) { # Iterate over each variable
+  variable_mean <- mean(postimp[[variable]], na.rm = TRUE) # Calculate mean and standard deviation for the current variable
+  variable_sd <- sd(postimp[[variable]], na.rm = TRUE)
+  variable_outliers <- postimp[[variable]] < (variable_mean - 3 * variable_sd) | postimp[[variable]] > (variable_mean + 3 * variable_sd)  # Identify data points outside the specified range for the current variable
+  outliers <- outliers | variable_outliers # Update the outlier flags
+}
+
+outlier_data <- postimp[outliers, ] # Subset the dataset to obtain the outliers
+postimp_excl_outlier <- postimp[!(rownames(postimp) %in% rownames(outlier_data)), ] # Exclude cases in outlier_data from postimp
+
+par(mfrow = c(1, 2)) # Set up the multi-panel plot
+hist(postimp$ace_postimp, main = "ace postimp with outliers", xlim = c(0, 10)) # Histogram of ace_postimp in postimp
+hist(postimp_excl_outlier$ace_postimp, main = "ace without outliers", xlim = c(0, 10)) # Histogram of ace_postimp in postimp_excl_outlier
+
+par(mfrow = c(1, 2)) 
+hist(postimp$phq9_postimp, main = "phq postimp with outliers", xlim = c(0, 32)) # Histogram of ace_postimp in postimp
+hist(postimp_excl_outlier$phq9_postimp, main = "phq without outliers", xlim = c(0, 32))
+
+par(mfrow = c(1, 2)) 
+hist(postimp$gad7_postimp, main = "gad postimp with outliers", xlim = c(0, 20), ylim = c(0, 700))
+hist(postimp_excl_outlier$gad7_postimp, main = "gad without outliers", xlim = c(0, 20), ylim = c(0, 700))
+par(mfrow = c(1, 1)) # Reset the plotting configuration
+
+postimp_excl_outlier$dlpfc <- (postimp_excl_outlier$rh_G_front_middle_thickness + postimp_excl_outlier$rh_G_front_sup_thickness) / 2
+```
+
+Save as csv files
+```{r}
+write.csv(postimp, file = "postimp_1950.csv", row.names = FALSE) # Save postimp dataframe n=1950
+
+write.csv(postimp_excl_outlier, file = "postimp_excl_outlier_1859.csv", row.names = FALSE) # Save postimp_excl_outlier dataframe n=1859
+
+#Save pseudonym values of all cases in the n=1900 sample
+length(postimp$pseudonym) # check for number of cases 
+sum(is.na(postimp$pseudonym)) # check for NAs
+pseudonym_values_1950 <- postimp$pseudonym
+values_string_1950 <- paste(pseudonym_values_1950, collapse = "\n") # Create a string with values separated by newline character
+write(values_string_1950, "pseudonym_values_postimp_1950.txt")  # Write the string to a text file
+
+#Save pseudonym values of all cases in the n=_1859 sample
+length(postimp_excl_outlier$pseudonym) # check for number of cases 
+sum(is.na(postimp_excl_outlier$pseudonym)) # check for NAs
+pseudonym_values_1859 <- postimp_excl_outlier$pseudonym
+values_string_1859 <- paste(pseudonym_values_1859, collapse = "\n") # Create a string with values separated by newline character
+write(values_string_1859, "pseudonym_values_postimp_no_na_excl_outl_1859.txt")  # Write the string to a text file
+```
